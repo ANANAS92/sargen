@@ -3,3 +3,4 @@
 /tests/.pytest_cache/
 /tests/__init__.py
 /tests/test1.py
+**/__pycache__/
