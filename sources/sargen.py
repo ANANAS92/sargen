@@ -182,16 +182,16 @@ def sar(image: Union[str, Path, Image.Image, np.ndarray], *, noise: bool = True,
 	if isinstance(image, Path):
 		if not image.is_file():
 			raise ValueError(f'Path {image.absolute()} does not point to an image file.')
-		if not image.exists():
-			raise ValueError(f'Could not find image at {image.absolute()}.')
 		image = Image.open(image)
 	if isinstance(image, Image.Image):
 		# noinspection PyTypeChecker
 		image = np.array(image)
 		shape = image.shape
 		if len(shape) < 3 or shape[2] < 3:
-			raise ValueError(f'Image must has shape (..., ..., 3) but has {shape}.')
+			raise ValueError(f'Image must has shape (height, width, 3) but has {shape}.')
 		image = image[:, :, :3]
+	if not isinstance(image, np.ndarray):
+		raise ValueError('Bad data type for image.')
 	image = image.astype(float)
 	image = convert_image(image, channels_weights=channels_weights, bias=bias)
 	if noise:

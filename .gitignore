@@ -1,0 +1,5 @@
+/tests/.coverage
+/tests/test.jpg
+/tests/.pytest_cache/
+/tests/__init__.py
+/tests/test1.py

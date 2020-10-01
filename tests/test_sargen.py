@@ -2,12 +2,47 @@
 Unit tests for SAR generator functions.
 """
 import math
-from typing import Tuple
+from typing import Callable, Tuple, Type
 
 import numpy as np
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 
 from sargen.sources.sargen import clamp_array, convert_image, noise_image, rotate_image, sar, scale_image, tilt_image, transform_image
+
+
+def _find_white_dot(array: np.ndarray) -> Tuple[Tuple[int, int], float]:
+	"""
+	Find white dot in array (0 is black, >0 is white) and return its coordinates and angle in radians (0 - 2Pi).
+
+	:param array: array of unsigned bytes.
+	"""
+	y = array.argmax(axis=0).max()
+	x = array.argmax(axis=1).max()
+	vector = np.array([x, y]) - np.array(array.shape) / 2  # from center
+	angle = math.acos(vector[0] / np.linalg.norm(vector))  # angle between vector and {1; 0}
+	if vector[1] < 0:
+		angle = 2 * math.pi - angle
+	return (x, y), angle
+
+
+def _wait_exception(statement: Callable, exception: Type[Exception], *args, text: str = None, **kwargs) -> bool:
+	"""
+	Assert statement call rises defined exception.
+
+
+	:param statement: statement that is called with args and kwargs.
+	:param exception: type of wanted exception.
+	:param text: if defined validates exception's message.
+	"""
+	# noinspection PyBroadException
+	try:
+		statement(*args, **kwargs)
+	except exception as ex:
+		if text is None:
+			return True
+		return str(ex) == text
+	else:
+		return False
 
 
 def test_clamp_array():
@@ -41,21 +76,6 @@ def test_noise_image():
 	assert round(data.mean()) == 100 and round(data.std()) == 20
 
 
-def _find_white_dot(array: np.ndarray) -> Tuple[Tuple[int, int], float]:
-	"""
-	Find white dot in array (0 is black, >0 is white) and return its coordinates and angle in radians (0 - 2Pi).
-
-	:param array: array of unsigned bytes.
-	"""
-	y = array.argmax(axis=0).max()
-	x = array.argmax(axis=1).max()
-	vector = np.array([x, y]) - np.array(array.shape) / 2  # from center
-	angle = math.acos(vector[0] / np.linalg.norm(vector))  # angle between vector and {1; 0}
-	if vector[1] < 0:
-		angle = 2 * math.pi - angle
-	return (x, y), angle
-
-
 def test_rotate_image():
 	"""
 	Generate image 100x100 and assert it is rotated uniformly randomly and it's size is not less then 30x30.
@@ -81,6 +101,7 @@ def test_scale_image():
 	"""
 	Generate image 100x100 and assert it is scaled normally randomly.
 	"""
+	# valid case
 	data = np.zeros((100, 100), dtype=np.uint8)
 	data[50, 50] = 255  # set white dot at center
 	image = Image.fromarray(data)
@@ -91,6 +112,11 @@ def test_scale_image():
 		sizes.append((scaled_data > 100).sum())
 	distribution = np.array(sizes)
 	assert (3 <= round(distribution.mean()) <= 6) and (1 <= round(distribution.std()) <= 4)
+	# invalid case - assert PIL rises ValueError
+	fake_generator = type('FakeNormalGenerator', (object,), {
+		'normal': lambda *args, **kwargs: -1  # Normal distribution of fake generator always returns -1 so scale factor is set to mean.
+	})
+	assert _wait_exception(scale_image, ValueError, image, mean=-1, generator=fake_generator(), text='height and width must be > 0')
 
 
 def test_tilt_image():
@@ -136,6 +162,7 @@ def test_sar():
 	"""
 	Use cases from subtests.
 	"""
+	# valid case
 	data = np.zeros((100, 100, 3), dtype=np.uint8)
 	data[50, 60] = np.array([8, 4, 2], dtype=np.uint8)  # set rgb(80, 80, 80) dot at center + {10; 0} vector
 	image = Image.fromarray(data)
@@ -148,8 +175,8 @@ def test_sar():
 		# noinspection PyTypeChecker
 		sar_data = np.array(sar(image, noise=True, transform=True, channels_weights=channels_weights, bias=bias, noise_mean=10, noise_deviation=2, scale_mean=2, scale_deviation=0.5, tilt_deviation=0.3, generator=np.random.default_rng()))
 		# noinspection PyArgumentList
-		assert sar_data.max() >= 50  # white color from RGB
-		assert (18 <= round(sar_data[:10, :10].mean()) <= 26) and round(sar_data[:10, :10].std()) <= 4  # noise
+		assert sar_data.max() >= 30  # white color from RGB
+		assert (15 <= round(sar_data[:10, :10].mean()) <= 30) and round(sar_data[:10, :10].std()) <= 6  # noise
 		# noinspection PyTypeChecker
 		_, angle = _find_white_dot(sar_data[:, :, 0])
 		angels.append(math.degrees(angle))
@@ -160,3 +187,8 @@ def test_sar():
 	# noinspection PyArgumentList
 	assert (20 <= distribution1.mean() <= 60) and distribution1.std() <= 10 and distribution1.max() >= 30 and distribution1.min() <= 50
 	assert (40 <= round(distribution2.mean()) <= 50) and (20 <= round(distribution2.std()) <= 30)
+	# invalid cases
+	assert _wait_exception(sar, ValueError, 123, text='Bad data type for image.')
+	assert _wait_exception(sar, ValueError, 'a://b/c.d', text='Path a:\\b\\c.d does not point to an image file.')
+	assert _wait_exception(sar, UnidentifiedImageError, __file__)
+	assert _wait_exception(sar, ValueError, Image.fromarray(np.arange(3)), text='Image must has shape (height, width, 3) but has (3, 1).')
