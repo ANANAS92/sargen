@@ -73,19 +73,25 @@ def rotate_image(image: Image.Image, *, generator: np.random.Generator = np.rand
 	return image
 
 
-def scale_image(image: Image.Image, *, mean: float = 1, deviation: float = 0.2, generator: np.random.Generator = np.random.default_rng()) -> Image.Image:
+def scale_image(image: Image.Image, *, deviation: float = 0.2, generator: np.random.Generator = np.random.default_rng()) -> Image.Image:
 	"""
-	Scale image by gaussian random factor.
+	Scale image by gaussian random factor (where mean is 100 %).
+
+	Actually crop image by random factor from (0; 0) pivot point (crop width and height).
 
 	:param image: image to scale.
-	:param mean: mu parameter of normal distribution.
 	:param deviation: sigma parameter of normal distribution also known as standard deviation.
 	:param generator: random number generator.
 	"""
-	factor = generator.normal(mean, deviation)
-	if factor <= 0:
-		factor = mean
-	return image.resize(tuple((np.array(image.size) * factor).round(0).astype(int)))
+	factor = 2
+	for _ in range(100):
+		factor = generator.normal(1, deviation)
+		if factor <= 1:
+			break
+	new_size = (np.array(image.size) * factor).round(0).astype(int)
+	image = image.crop((0, 0, new_size[0], new_size[1]))
+	image.load()
+	return image
 
 
 def _find_perspective_coefficients(origin_points: np.ndarray, transformed_points: np.ndarray) -> np.ndarray:
@@ -131,7 +137,7 @@ def tilt_image(image: Image.Image, *, deviation: float = 0.2, generator: np.rand
 	return image.transform(image.size, Image.PERSPECTIVE, tuple(transformation_parameters), Image.BICUBIC)
 
 
-def transform_image(image: Image.Image, *, rotate: bool = True, scale: bool = True, tilt: bool = True, scale_mean: float = 1, scale_deviation: float = 0.2, tilt_deviation: float = 0.2, generator: np.random.Generator = np.random.default_rng()) -> Image.Image:
+def transform_image(image: Image.Image, *, rotate: bool = True, scale: bool = True, tilt: bool = True, scale_deviation: float = 0.2, tilt_deviation: float = 0.2, generator: np.random.Generator = np.random.default_rng()) -> Image.Image:
 	"""
 	Apply random transformations to the image: rotation (by uniformly random angle), scale (by gaussian random factor) and tilt (by gaussian random factor).
 
@@ -143,7 +149,6 @@ def transform_image(image: Image.Image, *, rotate: bool = True, scale: bool = Tr
 	:param rotate: whether to apply rotation transformation.
 	:param scale: whether to apply rotation transformation.
 	:param tilt: whether to apply rotation transformation.
-	:param scale_mean: mu parameter of normal distribution in case scale is True.
 	:param scale_deviation: sigma parameter of normal distribution also known as standard deviation in case scale is True.
 	:param tilt_deviation: maximum perspective in pixels as the smallest side multiplication factor in case tilt is True, e.g. 0.2 from 1920x1080 results in deviation from 0 to 216 pixels in all directions.
 	:param generator: random number generator.
@@ -151,13 +156,13 @@ def transform_image(image: Image.Image, *, rotate: bool = True, scale: bool = Tr
 	if rotate:
 		image = rotate_image(image, generator=generator)
 	if scale:
-		image = scale_image(image, mean=scale_mean, deviation=scale_deviation, generator=generator)
+		image = scale_image(image, deviation=scale_deviation, generator=generator)
 	if tilt:
 		image = tilt_image(image, deviation=tilt_deviation, generator=generator)
 	return image
 
 
-def sar(image: Union[str, Path, Image.Image, np.ndarray], *, noise: bool = True, transform: bool = True, channels_weights: np.ndarray = np.array([0.299, 0.557, 0.144]), bias: float = -33, noise_mean: float = 0, noise_deviation: float = 12.5, scale_mean: float = 1, scale_deviation: float = 0.2, tilt_deviation: float = 0.2, generator: np.random.Generator = np.random.default_rng()) -> Image.Image:
+def sar(image: Union[str, Path, Image.Image, np.ndarray], *, noise: bool = True, transform: bool = True, channels_weights: np.ndarray = np.array([0.299, 0.557, 0.144]), bias: float = -33, noise_mean: float = 0, noise_deviation: float = 12.5, scale_deviation: float = 0.2, tilt_deviation: float = 0.2, generator: np.random.Generator = np.random.default_rng()) -> Image.Image:
 	"""
 	Generate SAR image from optic one.
 
@@ -172,7 +177,6 @@ def sar(image: Union[str, Path, Image.Image, np.ndarray], *, noise: bool = True,
 	:param bias: luma bias to apply after conversion.
 	:param noise_mean: mu parameter of normal distribution in case noise is True.
 	:param noise_deviation: sigma parameter of normal distribution also known as standard deviation in case noise is True.
-	:param scale_mean: mu parameter of normal distribution in case scale is True.
 	:param scale_deviation: sigma parameter of normal distribution also known as standard deviation in case scale is True.
 	:param tilt_deviation: maximum perspective in pixels as the smallest side multiplication factor in case tilt is True, e.g. 0.2 from 1920x1080 results in deviation from 0 to 216 pixels in all directions.
 	:param generator: random number generator.
@@ -198,5 +202,5 @@ def sar(image: Union[str, Path, Image.Image, np.ndarray], *, noise: bool = True,
 		image = noise_image(image, mean=noise_mean, deviation=noise_deviation, generator=generator)
 	image = Image.fromarray(clamp_array(image, minimum=0, maximum=255).astype(np.uint8)).convert('RGB')
 	if transform:
-		image = transform_image(image, scale_mean=scale_mean, scale_deviation=scale_deviation, tilt_deviation=tilt_deviation, generator=generator)
+		image = transform_image(image, scale_deviation=scale_deviation, tilt_deviation=tilt_deviation, generator=generator)
 	return image
