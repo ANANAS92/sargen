@@ -46,7 +46,17 @@ graph LR
 
     Add gaussian noise to each pixel with luma clamping.
 
-7. ### Rotate image
+4) ### Scale unit
+    Adjust unit size to image scale.
+
+5) ### Rotate unit
+    Emulate different orientation by random rotation.
+
+6) ### Place unit
+    Emulate different site by random position.  
+    **Note that now unit can be places anywhere on the whole image.**
+
+7) ### Rotate image
     Emulate different fly horizontal direction by random rotation.
 
 8) ### Downscale
