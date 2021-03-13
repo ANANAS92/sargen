@@ -89,7 +89,7 @@ def scale_image(image: Image.Image, *, deviation: float = 0.2, generator: np.ran
 		if factor <= 1:
 			break
 	new_size = (np.array(image.size) * factor).round(0).astype(int)
-	image = image.crop((0, 0, new_size[0], new_size[1]))
+	image = image.crop((0, 0, *new_size))
 	image.load()
 	return image
 
@@ -116,6 +116,26 @@ def _find_perspective_coefficients(origin_points: np.ndarray, transformed_points
 	return res.reshape(8)
 
 
+def _shift_corner(corner_points: np.ndarray, index: int, image: Image, deviation: float, generator: np.random.Generator) -> None:
+	"""
+	Shift bounding box corner outside by random factor.
+
+	:param corner_points: image corner points.
+	:param index: index of corner starting from top left (0, 1, 2 or 3).
+	:param image: source image.
+	:param deviation: maximum perspective factor.
+	:param generator: random number generator.
+	"""
+	if not 0 <= index < 4:
+		raise ValueError('Index must be 0, 1, 2 or 3.')
+	shift = -generator.uniform(0, deviation * image.size[0], 2).astype(corner_points.dtype)  # inverse for expanding transformation instead of reducing one
+	if index == 0 or index == 3:
+		shift[0] = -shift[0]
+	if index == 0 or index == 1:
+		shift[1] = -shift[1]
+	corner_points[index] += shift
+
+
 def tilt_image(image: Image.Image, *, deviation: float = 0.2, generator: np.random.Generator = np.random.default_rng()) -> Image.Image:
 	"""
 	Tilt image to any direction by gaussian random factor. This is perspective transformation.
@@ -123,16 +143,20 @@ def tilt_image(image: Image.Image, *, deviation: float = 0.2, generator: np.rand
 	Note that image is cropped to fit origin box.
 
 	:param image: image to tilt and crop.
-	:param deviation: maximum perspective in pixels as the smallest side multiplication factor, e.g. 0.2 from 1920x1080 results in deviation from 0 to 216 pixels in all directions.
+	:param deviation: maximum perspective factor.
 	:param generator: random number generator.
 	"""
 	# See https://stackoverflow.com/a/14178717 along with other answers and comments.
 	# We have 4 points = 8 coordinates that can be shifted (each in one direction only).
-	factors = -1 * clamp_array(generator.uniform(0, deviation * min(image.size), 8), minimum=0, maximum=deviation * min(image.size))  # invert factors to stretch image out of the clipping box
-	# Shift image box points out of self by factors to avoid empty space after perspective.
+	# Tilt can be performed in one or two adjacent points that are shifted randomly. Three points is the same as one points while four points means scale.
+	# So we just take 50/50 one or two adjacent corner points and shift them out of bounding box to avoid empty space after perspective.
 	origin_points = np.array([[0, 0], [image.width, 0], [image.width, image.height], [0, image.height]])
-	transformed_points = np.array([[-factors[0], -factors[1]], [image.width + factors[2], -factors[3]], [image.width + factors[4], image.height + factors[5]], [-factors[6], image.height + factors[7]]])
-
+	transformed_points = origin_points.copy()
+	shifted_corner = generator.integers(0, 4)
+	_shift_corner(transformed_points, shifted_corner, image, deviation, generator)
+	if generator.random() < 0.5:
+		shifted_corner = (shifted_corner + 1 if generator.random() < 0.5 else shifted_corner - 1) % 4
+		_shift_corner(transformed_points, shifted_corner, image, deviation, generator)
 	transformation_parameters = _find_perspective_coefficients(origin_points, transformed_points)
 	return image.transform(image.size, Image.PERSPECTIVE, tuple(transformation_parameters), Image.BICUBIC)
 
@@ -150,7 +174,7 @@ def transform_image(image: Image.Image, *, rotate: bool = True, scale: bool = Tr
 	:param scale: whether to apply rotation transformation.
 	:param tilt: whether to apply rotation transformation.
 	:param scale_deviation: sigma parameter of normal distribution also known as standard deviation in case scale is True.
-	:param tilt_deviation: maximum perspective in pixels as the smallest side multiplication factor in case tilt is True, e.g. 0.2 from 1920x1080 results in deviation from 0 to 216 pixels in all directions.
+	:param tilt_deviation: maximum perspective factor.
 	:param generator: random number generator.
 	"""
 	if rotate:
@@ -162,7 +186,7 @@ def transform_image(image: Image.Image, *, rotate: bool = True, scale: bool = Tr
 	return image
 
 
-def sar(image: Union[str, Path, Image.Image, np.ndarray], *, noise: bool = True, transform: bool = True, channels_weights: np.ndarray = np.array([0.299, 0.557, 0.144]), bias: float = -33, noise_mean: float = 0, noise_deviation: float = 12.5, scale_deviation: float = 0.2, tilt_deviation: float = 0.2, generator: np.random.Generator = np.random.default_rng()) -> Image.Image:
+def sar(image: Union[str, Path, Image.Image, np.ndarray], *, noise: bool = True, transform: bool = True, rotate: bool = True, scale: bool = True, tilt: bool = True, channels_weights: np.ndarray = np.array([0.299, 0.557, 0.144]), bias: float = -33, noise_mean: float = 0, noise_deviation: float = 12.5, scale_deviation: float = 0.2, tilt_deviation: float = 0.2, generator: np.random.Generator = np.random.default_rng()) -> Image.Image:
 	"""
 	Generate SAR image from optic one.
 
@@ -173,12 +197,15 @@ def sar(image: Union[str, Path, Image.Image, np.ndarray], *, noise: bool = True,
 	:param image: text of path to image file or path object or image object or array of shape (height, width, 3) of numbers.
 	:param noise:  whether to apply gaussian noise.
 	:param transform: whether to apply random transformations.
+	:param rotate: whether to apply rotation transformation if transform is True.
+	:param scale: whether to apply rotation transformation if transform is True.
+	:param tilt: whether to apply rotation transformation if transform is True.
 	:param channels_weights: R, G, B coefficients array of shape 3 of floats.
 	:param bias: luma bias to apply after conversion.
 	:param noise_mean: mu parameter of normal distribution in case noise is True.
 	:param noise_deviation: sigma parameter of normal distribution also known as standard deviation in case noise is True.
 	:param scale_deviation: sigma parameter of normal distribution also known as standard deviation in case scale is True.
-	:param tilt_deviation: maximum perspective in pixels as the smallest side multiplication factor in case tilt is True, e.g. 0.2 from 1920x1080 results in deviation from 0 to 216 pixels in all directions.
+	:param tilt_deviation: maximum perspective factor.
 	:param generator: random number generator.
 	"""
 	if isinstance(image, str):
@@ -202,5 +229,5 @@ def sar(image: Union[str, Path, Image.Image, np.ndarray], *, noise: bool = True,
 		image = noise_image(image, mean=noise_mean, deviation=noise_deviation, generator=generator)
 	image = Image.fromarray(clamp_array(image, minimum=0, maximum=255).astype(np.uint8)).convert('RGB')
 	if transform:
-		image = transform_image(image, scale_deviation=scale_deviation, tilt_deviation=tilt_deviation, generator=generator)
+		image = transform_image(image, rotate=rotate, scale=scale, tilt=tilt, scale_deviation=scale_deviation, tilt_deviation=tilt_deviation, generator=generator)
 	return image
