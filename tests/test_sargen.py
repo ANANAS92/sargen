@@ -2,12 +2,13 @@
 Unit tests for SAR generator functions.
 """
 import math
+from pathlib import Path
 from typing import Callable, Tuple, Type
 
 import numpy as np
 from PIL import Image, UnidentifiedImageError
 
-from sargen.sources.sargen import clamp_array, convert_image, noise_image, rotate_image, sar, scale_image, tilt_image, transform_image
+from sources.sargen import clamp_array, convert_image, noise_image, rotate_image, sar, scale_image, tilt_image, transform_image
 
 
 def _find_white_dot(array: np.ndarray) -> Tuple[Tuple[int, int], float]:
@@ -108,15 +109,17 @@ def test_scale_image():
 	sizes = []
 	for _ in range(1000):
 		# noinspection PyTypeChecker
-		scaled_data = np.array(scale_image(image,deviation=0.5, generator=np.random.default_rng()))
+		scaled_data = np.array(scale_image(image, deviation=0.5, generator=np.random.default_rng()))
 		sizes.append((scaled_data > 100).sum())
 	distribution = np.array(sizes)
 	assert (0 <= round(distribution.std()) <= 50)
-	# invalid case - assert PIL rises ValueError
-	# fake_generator = type('FakeNormalGenerator', (object,), {
-	# 	'normal': lambda *args, **kwargs: -1  # Normal distribution of fake generator always returns -1 so scale factor is set to mean.
-	# })
-	# assert _wait_exception(scale_image, ValueError, image, mean=-1, generator=fake_generator(), text='height and width must be > 0')
+
+
+# invalid case - assert PIL rises ValueError
+# fake_generator = type('FakeNormalGenerator', (object,), {
+# 	'normal': lambda *args, **kwargs: -1  # Normal distribution of fake generator always returns -1 so scale factor is set to mean.
+# })
+# assert _wait_exception(scale_image, ValueError, image, mean=-1, generator=fake_generator(), text='height and width must be > 0')
 
 
 def test_tilt_image():
@@ -192,3 +195,13 @@ def test_sar():
 	assert _wait_exception(sar, ValueError, 'a://b/c.d', text='Path a:\\b\\c.d does not point to an image file.')
 	assert _wait_exception(sar, UnidentifiedImageError, __file__)
 	assert _wait_exception(sar, ValueError, Image.fromarray(np.arange(3)), text='Image must has shape (height, width, 3) but has (3, 1).')
+
+
+def test_long_image():
+	for _ in range(5):
+		i = sar(Path.cwd() / '..' / 'sources' / '[29.71810703168532, 60.013504664115956]_[29.980212130690774, 60.05949682000656]' / 'rotated' / 'rotated([29.71810703168532, 60.013504664115956]_[29.980212130690774, 60.05949682000656]_109).png', rotate=False, tilt_deviation=0.2)
+		i.show(title=str(i.size))
+
+
+if __name__ == '__main__':
+	test_long_image()

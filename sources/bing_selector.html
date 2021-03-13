@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+	<meta charset="UTF-8">
+	<title>Bing map selector</title>
+	<style>
+		body {
+			margin: 0;
+			padding: 0;
+		}
+
+		#myMap {
+			position: relative;
+			width: 100%;
+			height: 100%;
+		}
+	</style>
+</head>
+<body>
+<div id="myMap"></div>
+</body>
+<script type='text/javascript' src='https://www.bing.com/api/maps/mapcontrol?setLang=ru&setMkt=ru-RU&callback=GetMap&key=Agk8Im5rSKvyKNxRK5r3RDwlqQm11T5XP6fm7mtN37tyEK6Yycj3CINqL3PJrH9M' async defer></script>
+<script type="text/javascript">
+
+	window.path = [];
+
+	function GetMap() {
+		let waypoints = [];
+		let path = null;
+		let map = new Microsoft.Maps.Map('#myMap', {
+			showBreadcrumb: true,
+		});
+
+		function AddWaypoint(location) {
+			let pin = new Microsoft.Maps.Pushpin(location, {
+				color: 'red',
+				cursor: 'grab',
+				draggable: true,
+			});
+			Microsoft.Maps.Events.addHandler(pin, 'click', _ => RemoveWaypoint(pin));
+			Microsoft.Maps.Events.addHandler(pin, 'drag', UpdatePath);
+			Microsoft.Maps.Events.addHandler(pin, 'dragend', UpdatePath);
+			map.entities.push(pin);
+			waypoints.push(pin);
+			UpdatePath();
+			return pin;
+		}
+
+		function RemoveWaypoint(pin) {
+			map.entities.remove(pin);
+			waypoints.splice(waypoints.indexOf(pin), 1);
+			UpdatePath();
+			return pin;
+		}
+
+		function UpdatePath() {
+			window.path = waypoints.map(x => [x.geometry.y, x.geometry.x]);
+			if (path !== null) {
+				map.entities.remove(path);
+				path = null;
+			}
+			if (waypoints.length >= 2) {
+				path = new Microsoft.Maps.Polyline(window.path.map(x => new Microsoft.Maps.Location(x[0], x[1])), {strokeColor: 'red'});
+				map.entities.push(path);
+			}
+		}
+
+		Microsoft.Maps.Events.addHandler(map, 'click', e => AddWaypoint(e.location));
+	}
+</script>
+</html>
