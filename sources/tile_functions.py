@@ -1,553 +1,671 @@
 # -*- coding: utf-8 -*-
 """
-Created on Wed Mar  3 13:42:07 2021
+Created on Tue Mar  9 12:25:01 2021
 
-@author: user
+@author: DELL
 """
 
-
-import json,os,pyproj,urllib.request,cv2
+import json, os, pyproj, urllib.request, cv2
 import numpy as np
-import json
 from PIL import Image
 from io import BytesIO
-from pyproj import Proj, transform
+# from pyproj import Proj, transform
 import matplotlib.pyplot as plt
 from descartes import PolygonPatch
-from shapely.geometry import Point,LineString,Polygon
+from shapely.geometry import Point, LineString, Polygon
 from matplotlib.pyplot import imread
 from pyproj import Transformer
-import copy,operator
-import math
+import copy, shapely
+import shutil
 
 geod = pyproj.Geod(ellps='WGS84')
 
-def dist_n(p0,p1):
-    a,b= Point(p0),Point(p1)
-    angle1,angle2,distance1 = geod.inv(a.x, a.y, b.x, b.y)
-    return distance1
 
-def plot_line(ax, ob,color , w = 0.5,alpha =1):
-    x, y = ob.xy
-    ax.plot(x, y, color=color, linewidth=w, alpha =1, solid_capstyle='round', zorder=1)
+def valid_lonlat(lon, lat):
+	# Put the longitude in the range of [0,360):
+	lon %= 360
+	# Put the longitude in the range of [-180,180):
+	if lon >= 180:
+		lon -= 360
+	lon_lat_point = shapely.geometry.Point(lon, lat)
+	lon_lat_bounds = shapely.geometry.Polygon.from_bounds(
+		xmin=-180.0, ymin=-90.0, xmax=180.0, ymax=90.0
+	)
+	# return lon_lat_bounds.intersects(lon_lat_point)
+	# would not provide any corrected values
+
+	if lon_lat_bounds.intersects(lon_lat_point):
+		return lon, lat
+
+
+def dist_n(p0, p1):
+	a, b = Point(p0), Point(p1)
+	angle1, angle2, distance1 = geod.inv(a.x, a.y, b.x, b.y)
+	return distance1
+
+
+def plot_line(ax, ob, color, w=0.5, alpha=1):
+	x, y = ob.xy
+	ax.plot(x, y, color=color, linewidth=w, alpha=1, solid_capstyle='round', zorder=1)
+
 
 def formart_point(point):
-    return (float("{:.5f}".format(point[0])), float("{:.5f}".format(point[1])))
+	return (float("{:.5f}".format(point[0])), float("{:.5f}".format(point[1])))
 
-        
+
 def makeRequest(rq):
-    f = urllib.request.urlopen(rq)
-    data = f.read()
-    return data
+	f = urllib.request.urlopen(rq)
+	data = f.read()
+	return data
+
 
 def find_folder(direction_out):
-    try:
-        if os.path.isdir(direction_out):
-            os.remove(direction_out)
-        os.mkdir(direction_out)
-    except:
-        pass   
-    
-      
-def new_directions(direct,name):    
-    find_folder(name) 
-    directions={}        
-    for d in direct.keys():
-        directions[d]=name+'\\'+direct[d]   
-    return directions
-
-def count_step_and_view(dist,min_dist,radius):
-#    if dist//min_dist>10:
-#        step=min_dist*10
-#        view=radius*5
-#    else:
-    step,view=min_dist,radius
-    return step,view
+	if os.path.isdir(direction_out):
+		shutil.rmtree(direction_out)
+	os.mkdir(direction_out)
 
 
-def check_path(path):
-    if len(path)<2:
-        return False
-    else:
-        for point in path:            
-            if type(point) is not list or len(point)!=2:
-                return False
-        return True
-    
-def set_points(start,finish,min_dist,radius):        
-    dist = dist_n(start,finish)
-    step,view = count_step_and_view(dist,min_dist,radius)
-    delta= int(dist//step)+1
-    if delta==1:
-        delta=2
-    return dist,step,view, delta
-
-def get_list_points(start,finish,delta,sis_coord):
-    transformer    = Transformer.from_crs(sis_coord['WGS_84'],sis_coord['Pseudo_Mercator'])     
-    transformer_84 = Transformer.from_crs(sis_coord['Pseudo_Mercator'],sis_coord['WGS_84'])   
-    l =[]
-    point0 = transformer.transform(start[1],start[0])
-    point1 = transformer.transform(finish[1],finish[0])
-    xquery = np.linspace(point0[0],point1[0], delta)
-    yquery = np.linspace(point0[1],point1[1], delta)
-    for j in range(len(xquery)):
-        p = transformer_84.transform(xquery[j],yquery[j])
-        new_p=formart_point(p)
-        l.append((new_p[1],new_p[0]))
-    return l
-
-def get_list_points_mult_direction (path,min_dist,radius,sis_coord):
-    Point_WGS84=[formart_point((path[0][0],path[0][1]))]
-    V=[]
-    for i in range(len(path)-1):
-        start,finish = formart_point(path[i]),formart_point(path[i+1])
-        dist,step,view, delta = set_points(start,finish,min_dist,radius)
-        V.append(view)
-        l = get_list_points(start,finish,delta,sis_coord)
-        Point_WGS84.extend(l[1:])
-    return V,Point_WGS84
-
-def extend_path(start,finish, step_length,remain,dist,sis_coord):
-    transformer    = Transformer.from_crs(sis_coord['WGS_84'],sis_coord['Pseudo_Mercator'])     
-    transformer_84 = Transformer.from_crs(sis_coord['Pseudo_Mercator'],sis_coord['WGS_84'])       
-    dist_to_new_point = int(step_length-remain)+1            
-    point0 = transformer.transform(start[1],start[0])
-    point1 = transformer.transform(finish[1],finish[0])
-    detX = (point1[0]-point0[0])/dist
-    delY = (point1[1]-point0[1])/dist            
-    new_finish = (point1[0]+(dist_to_new_point*detX),point1[1]+(dist_to_new_point*delY))
-    n_finish = transformer_84.transform(new_finish[0],new_finish[1])
-    return (n_finish[1],n_finish[0])
+#    except:
+#        pass
 
 
-def list_of_points(path,direct,step_length,shooting_radius,sis_coord ):
-    if len(path)==2: 
-        start,finish = formart_point(path[0]),formart_point(path[1])
-        name = str(path[0])+'_'+str(path[1])
-        directions=new_directions(direct,name)        
-        dist,step,view, delta = set_points(start,finish,step_length,shooting_radius)
-        remain = dist%step_length
-        if remain!=0: 
-            new_finish=extend_path(start,finish, step_length,remain,dist,sis_coord)
-            dist,step,view, delta = set_points(start,new_finish,step_length,shooting_radius)
-            Point_WGS84 = get_list_points(start,new_finish,delta,sis_coord)
-        else:
-            Point_WGS84 = get_list_points(start,finish,delta,sis_coord)
-    else:
-        name = str([path[0][0],path[0][1]])+'_'+str([path[-1][0],path[-1][1]])
-        directions=new_directions(direct,name)   
-        step_length,shooting_radius=100,50
-        V,Point_WGS84 = get_list_points_mult_direction (path,step_length,shooting_radius,sis_coord)
-        view = V[0]
-    return directions,view,Point_WGS84,name
+def new_directions(direct, name):
+	directions = {}
+	for key in direct.keys():
+		find_folder(name + '\\' + key)
+		for d in direct[key].keys():
+			find_folder(name + '\\' + key + '\\' + direct[key][d])
+			directions[d] = name + '\\' + key + '\\' + direct[key][d]
+	return directions
 
 
-
-def latlon_data (start,finish,binKey):    
-    lat_max,lat_min = max([start[1],finish[1]]),min([start[1],finish[1]])
-    lon_max,lon_min = max([start[0],finish[0]]),min([start[0],finish[0]])
-    rq = "http://dev.virtualearth.net/REST/V1/Imagery/Map/AerialWithLabels?mapArea={0},{1},{2},{3}&ms=1000,100&mmd=0&key={4}"
-    rq = "http://dev.virtualearth.net/REST/V1/Imagery/Map/AerialWithLabels?mapArea={0},{1},{2},{3}&ms=1000,1000&mmd={4}&key={5}"
-    rq1 = rq.format(lat_min, lon_min, lat_max, lon_max, 0, binKey)
-    rq2 = rq.format(lat_min, lon_min, lat_max, lon_max, 1, binKey)
-    return rq1,rq2
-
-
-def get_bing_tile(start,finish,binKey):
-    rq1,rq2= latlon_data (start,finish, binKey)  
-    tile = makeRequest(rq1)
-    retJson = makeRequest(rq2).decode('utf-8')
-    obj = json.loads(retJson)
-    zoom = int(obj['resourceSets'][0]['resources'][0]['zoom'])
-#    print('Zoom: ',zoom)
-    coords = obj['resourceSets'][0]['resources'][0]['bbox']
-    size_picture = (int(obj['resourceSets'][0]['resources'][0]['imageWidth']),int(obj['resourceSets'][0]['resources'][0]['imageHeight']))
-    return [coords[1],coords[3],coords[0],coords[2]], size_picture,zoom,tile
+def set_points(start, finish, step_length):
+	dist = dist_n(start, finish)
+	step = step_length
+	view = step_length
+	if dist % step_length == 0:
+		delta = int(dist // step) + 1
+	else:
+		delta = int(dist // step) + 2
+	return dist, step, view, delta
 
 
-def get_tile_dict(Point_WGS84,binKey):  
-#    fig, ax = plt.subplots(num=None, figsize=(24,12),  dpi=30)
-    Tiles,Z={},{}
-    for i in range(len(Point_WGS84)-1):
-        coords, size_picture,zoom,tile = get_bing_tile(Point_WGS84[i],Point_WGS84[i+1],binKey)
-#        print(zoom)
-        Tiles[(Point_WGS84[i],Point_WGS84[i+1])]={'box': [(coords[0],coords[2]),(coords[0],coords[3]),(coords[1],coords[3]),(coords[1],coords[2])],
-                                   'size': size_picture,
-                                   'del_width': dist_n((coords[0],coords[2]),(coords[1],coords[2]))/size_picture[0],
-                                   'del_high':  dist_n((coords[0],coords[2]),(coords[0],coords[3]))/size_picture[1], 
-                                   'polygon':Polygon([(coords[0],coords[2]),(coords[0],coords[3]),(coords[1],coords[3]),(coords[1],coords[2]),(coords[0],coords[2])]),
-                                   'line':   LineString([Point_WGS84[i],Point_WGS84[i+1]]),
-                                   'start':  Point_WGS84[i],
-                                   'finish': Point_WGS84[i+1],
-                                   'zoom': zoom,
-                                   'tile': tile,
-                                   'id': i}
-#        ax.add_patch(PolygonPatch(Polygon([(coords[0],coords[2]),(coords[0],coords[3]),(coords[1],coords[3]),(coords[1],coords[2]),(coords[0],coords[2])]), fc='grey', ec='grey', alpha=0.2, zorder=1))              
-#        plot_line(ax, LineString([Point_WGS84[i],Point_WGS84[i+1]]) ,'red' , w = 5,alpha =1)
-        Z[(Point_WGS84[i],Point_WGS84[i+1])]=zoom
-#    plt.show()
-#    plt.close()
-    return Tiles,Z
+def get_list_points(start, finish, delta, sis_coord):
+	transformer = Transformer.from_crs(sis_coord['WGS_84'], sis_coord['Pseudo_Mercator'])
+	transformer_84 = Transformer.from_crs(sis_coord['Pseudo_Mercator'], sis_coord['WGS_84'])
+	l = []
+	point0 = transformer.transform(start[1], start[0])
+	point1 = transformer.transform(finish[1], finish[0])
+	xquery = np.linspace(point0[0], point1[0], delta)
+	yquery = np.linspace(point0[1], point1[1], delta)
+	for j in range(len(xquery)):
+		p = transformer_84.transform(xquery[j], yquery[j])
+		new_p = formart_point(p)
+		l.append((new_p[1], new_p[0]))
+	return l
 
-def check_zoom(Tiles,Z,all_zooms,Point_WGS84,binKey,sis_coord):
-    Del_tiles,T=[],{}
-    popular_zoom = max(all_zooms.items(), key=operator.itemgetter(1))[0]
-    for i in Tiles.keys():
-        if Tiles[i]['zoom']!=popular_zoom:
-            Del_tiles.append(i)            
-            point0,point1 = Tiles[i]['start'],Tiles[i]['finish']
-            New_points=get_list_points(point0,point1,3,sis_coord)
-            Point_WGS84.insert (Point_WGS84.index(i[0])+1, New_points[1])
-            for j in range(len(New_points)-1):
-                coords, size_picture,zoom,tile = get_bing_tile(New_points[j],New_points[j+1],binKey) 
-                T[(New_points[j],New_points[j+1])]={'box': [(coords[0],coords[2]),(coords[0],coords[3]),(coords[1],coords[3]),(coords[1],coords[2])],
-                                              'size': size_picture,
-                                              'del_width': dist_n((coords[0],coords[2]),(coords[1],coords[2]))/size_picture[0],
-                                              'del_high':  dist_n((coords[0],coords[2]),(coords[0],coords[3]))/size_picture[1], 
-                                              'polygon':Polygon([(coords[0],coords[2]),(coords[0],coords[3]),(coords[1],coords[3]),(coords[1],coords[2]),(coords[0],coords[2])]),
-                                              'line':   LineString([New_points[j],New_points[j+1]]),
-                                              'start':  New_points[j],
-                                              'finish': New_points[j+1],
-                                              'zoom': zoom,
-                                              'tile': tile,
-                                              'id': (Tiles[i]['id'],j)}                
-                Z[(point0,point1)]=zoom
-    if len(Del_tiles)!=0:
-        for d in Del_tiles:
-            del Tiles[d],Z[d]
-    T1 = {**Tiles, **T}
-    return T1,Z,Point_WGS84
+
+def extend_path(start, finish, step_length, remain, dist, sis_coord):
+	transformer = Transformer.from_crs(sis_coord['WGS_84'], sis_coord['Pseudo_Mercator'])
+	transformer_84 = Transformer.from_crs(sis_coord['Pseudo_Mercator'], sis_coord['WGS_84'])
+	dist_to_new_point = int(step_length - remain) + 1
+	point0 = transformer.transform(start[1], start[0])
+	point1 = transformer.transform(finish[1], finish[0])
+	detX = (point1[0] - point0[0]) / dist
+	delY = (point1[1] - point0[1]) / dist
+	new_finish = (point1[0] + (dist_to_new_point * detX), point1[1] + (dist_to_new_point * delY))
+	n_finish = transformer_84.transform(new_finish[0], new_finish[1])
+	return (n_finish[1], n_finish[0])
+
+
+def list_of_points(path, direct, step_length, shooting_radius, sis_coord):
+	if len(path) == 2:
+		start, finish = formart_point(path[0]), formart_point(path[1])
+		name = str(path[0]) + '_' + str(path[1])
+		directions = new_directions(direct, name)
+		dist, step, view, delta = set_points(start, finish, step_length, shooting_radius)
+		remain = dist % step_length
+		if remain != 0:
+			new_finish = extend_path(start, finish, step_length, remain, dist, sis_coord)
+			dist, step, view, delta = set_points(start, new_finish, step_length, shooting_radius)
+			Point_WGS84 = get_list_points(start, new_finish, delta, sis_coord)
+		else:
+			Point_WGS84 = get_list_points(start, finish, delta, sis_coord)
+	return directions, view, Point_WGS84, name
+
+
+def latlon_data(start, finish, binKey, type_of_imagery):
+	lat_max, lat_min = max([start[1], finish[1]]), min([start[1], finish[1]])
+	lon_max, lon_min = max([start[0], finish[0]]), min([start[0], finish[0]])
+	rq = "http://dev.virtualearth.net/REST/V1/Imagery/Map/{0}?mapArea={1},{2},{3},{4}&zoomLevel=19&ms=1000,100&mmd=0&key={5}"
+	rq = "http://dev.virtualearth.net/REST/V1/Imagery/Map/{0}?mapArea={1},{2},{3},{4}&zoomLevel=19&ms=1000,1000&mmd={5}&key={6}"
+	rq1 = rq.format(type_of_imagery, lat_min, lon_min, lat_max, lon_max, 0, binKey)
+	rq2 = rq.format(type_of_imagery, lat_min, lon_min, lat_max, lon_max, 1, binKey)
+	return rq1, rq2
+
+
+def get_bing_tile(start, finish, binKey, type_of_imagery):
+	rq1, rq2 = latlon_data(start, finish, binKey, type_of_imagery)
+	tile = makeRequest(rq1)
+	retJson = makeRequest(rq2).decode('utf-8')
+	obj = json.loads(retJson)
+	zoom = int(obj['resourceSets'][0]['resources'][0]['zoom'])
+	#    print('Zoom: ',zoom)
+	coords = obj['resourceSets'][0]['resources'][0]['bbox']
+	size_picture = (int(obj['resourceSets'][0]['resources'][0]['imageWidth']), int(obj['resourceSets'][0]['resources'][0]['imageHeight']))
+	return [coords[1], coords[3], coords[0], coords[2]], size_picture, zoom, tile
+
+
+def get_tile_dict(Point_WGS84, binKey, type_of_imagery, name, direction_output):
+	Tiles, Z = {}, {}
+	for i in range(len(Point_WGS84) - 1):
+		coords, size_picture, zoom, tile = get_bing_tile(Point_WGS84[i], Point_WGS84[i + 1], binKey, type_of_imagery)
+		Tiles[(Point_WGS84[i], Point_WGS84[i + 1])] = {'box': [(coords[0], coords[2]), (coords[0], coords[3]), (coords[1], coords[3]), (coords[1], coords[2])],
+		                                               'size': size_picture,
+		                                               'del_width': dist_n((coords[0], coords[2]), (coords[1], coords[2])) / size_picture[0],
+		                                               'del_high': dist_n((coords[0], coords[2]), (coords[0], coords[3])) / size_picture[1],
+		                                               'polygon': Polygon([(coords[0], coords[2]), (coords[0], coords[3]), (coords[1], coords[3]), (coords[1], coords[2]), (coords[0], coords[2])]),
+		                                               'line': LineString([Point_WGS84[i], Point_WGS84[i + 1]]),
+		                                               'start': Point_WGS84[i],
+		                                               'finish': Point_WGS84[i + 1],
+		                                               'zoom': zoom,
+		                                               'tile': tile,
+		                                               'id': i}
+		Z[(Point_WGS84[i], Point_WGS84[i + 1])] = zoom
+		image = Image.open(BytesIO(tile))
+		try:
+			path = os.path.join(direction_output, 'tile_' + name + '_' + str(i) + '.jpg')
+			image.save(path)
+		except:
+			path = os.path.join(direction_output, 'tile_' + name + '_' + str(i) + '.png')
+			image.save(path)
+
+		Tiles[(Point_WGS84[i], Point_WGS84[i + 1])]['name_pict'] = name + '_' + str(i)
+		image.close()
+	return Tiles, Z
 
 
 def path_plan(Tiles, Point_WGS84, ax):
-    L=[]
-    for i in  range(len(Point_WGS84)-1):
-        points=(Point_WGS84[i],Point_WGS84[i+1])
-        if points in Tiles.keys():
-            L.append(points)
-            plot_line(ax, Tiles[points]['line'] ,'red' , w = 1,alpha =1)
-            ax.plot(Tiles[points]['start'][0],Tiles[points]['start'][1],'o', markersize=7, color='red') 
-            ax.plot(Tiles[points]['finish'][0],Tiles[points]['finish'][1],'o', markersize=6, color='blue')
-            ax.add_patch(PolygonPatch(Tiles[points]['polygon'], fc='gray', ec='gray', alpha=0.2, zorder=1))
-#            ax.text(Tiles[points]['start'][0],Tiles[points]['start'][1], str(i), ha='center', va='center',color='black',fontsize=40)     
-        else:
-            raise Exception ('error', points)
-    ax.set_aspect(1)    
-    return L,ax
-
-def save_tile_as_picture(Tiles,direction_output,name):   
-    id_pict=0
-    for key in Tiles.keys():
-        image = Image.open(BytesIO(Tiles[key]['tile']))
-        find_folder(direction_output)
-        path = os.path.join(direction_output,'tile_satellite('+name+'_'+str(id_pict)+').jpg')
-        image.save(path)
-        Tiles[key]['name_pict'] = name+'_'+str(id_pict)+')'
-        id_pict+=1
-    return Tiles
+	L = []
+	for i in range(len(Point_WGS84) - 1):
+		points = (Point_WGS84[i], Point_WGS84[i + 1])
+		if points in Tiles.keys():
+			L.append(points)
+			plot_line(ax, Tiles[points]['line'], 'red', w=1, alpha=1)
+			ax.plot(Tiles[points]['start'][0], Tiles[points]['start'][1], 'o', markersize=7, color='red')
+			ax.plot(Tiles[points]['finish'][0], Tiles[points]['finish'][1], 'o', markersize=6, color='blue')
+			ax.add_patch(PolygonPatch(Tiles[points]['polygon'], fc='gray', ec='gray', alpha=0.2, zorder=1))
+		else:
+			raise Exception('error', points)
+	ax.set_aspect(1)
+	return L, ax
 
 
+def get_parametrs(start, finish, first_tile, Tiles, L):
+	if start[0] < finish[0]:  # х увеличивается
+		width = 0  # ширина рисунка начинается с 0
+		if start[1] < finish[1]:  # y увеличивается
+			high = Tiles[first_tile]['size'][1] * (len(L) - 1)  # высота рисунка начинается с последнего тайла
+		else:
+			high = 0
+	elif start[0] > finish[0]:
+		width = Tiles[L[0]]['size'][0] * (len(L) - 1)  # ширина рисунка начинается с последнего тайла
+		if start[1] < finish[1]:  # y увеличивается
+			high = Tiles[first_tile]['size'][1] * (len(L) - 1)  # высота рисунка начинается с последнего тайла
+		else:
+			high = 0  # высота рисунка начинается с 0
+	else:
+		width = 0  # ширина рисунка начинается с 0
+		if start[1] < finish[1]:  # y увеличивается
+			high = Tiles[first_tile]['size'][1] * (len(L) - 1)  # высота рисунка начинается с последнего тайла
+		else:
+			high = 0
+	return width, high
 
 
-def get_angle(point0,point1):
-    P1 = Point(point1)
-    P2 = Point((point0[0],point1[1]))
-    interP = Point(point0)
-        
-    dx = P1.x-interP.x
-    dy = P1.y-interP.y
-            
-    dx2 = interP.x-P2.x
-    dy2 = interP.y-P2.y
-            
-    azimuth1 = np.arctan2(dx,dy)*180/np.pi
-    azimuth2 = np.arctan2(dx2,dy2)*180/np.pi
-     
-    azimuth11 = 360-azimuth1    # dx>0 & dy<0     
-    azimuth22 = 180-azimuth2    # dx<0 & dy>0
-    angle = -(azimuth11-azimuth22)
-    return angle
-
-def get_mask_simple(direction_output_tile,direction_output_mask,direction_final, direction_rotated,Tiles,Point_WGS84, name, shooting_radius, sis_coord):
-    transformer = Transformer.from_crs(sis_coord['WGS_84'],sis_coord['Pseudo_Mercator'])  
-    Data_json = {}
-    for num in range(len(Point_WGS84)-1):        
-        id_line=num
-       
-        path = os.path.join(direction_output_tile,'tile_satellite('+name+'_'+str(id_line)+').jpg')
-        mTile = Image.open(path, 'r') 
-        
-        fig = plt.figure(frameon=False,figsize=(mTile.size[0], mTile.size[1]), dpi=1)
-        fig.patch.set_facecolor('black') 
-        ax = plt.Axes(fig, [0., 0., 1., 1.])
-        ax.set_axis_off()
-        fig.add_axes(ax)
-         
-        point0 = transformer.transform(Point_WGS84[num][1],Point_WGS84[num][0])
-        point1 = transformer.transform(Point_WGS84[num+1][1],Point_WGS84[num+1][0])
-
-        box = Tiles[(Point_WGS84[num],Point_WGS84[num+1])]['box']
-        Data_json[id_line]={'start':Point_WGS84[num],'finish':Point_WGS84[num+1],'polygon:':box}
-        minXY,maxXY = box[0],box[2]
-        min_point = transformer.transform(minXY[1],minXY[0])
-        p1,p3 = transformer.transform(box[1][1],box[1][0]), transformer.transform(box[3][1],box[3][0])
-        max_point = transformer.transform(maxXY[1],maxXY[0])
-        
-        poly = Polygon ([min_point,p1,max_point,p3])
-        ax.add_patch(PolygonPatch(poly, fc='black', ec='black', alpha=1, zorder=1))            
-        line = LineString([point0,point1])  
-        dilated = line.buffer(shooting_radius, cap_style = 2, join_style=2)
-#        ax.add_patch(PolygonPatch(dilated, fc='yellow', ec='yellow', alpha=0.7, zorder=1))    
-            
-        
-
-        poly1 = dilated.difference(poly)       
-#        print(poly1.is_empty)
-        if poly1.is_empty==False:
-#            print(poly1.geom_type)
-            max_delta=[]
-            if poly1.geom_type=='MultiPolygon':
-                for p in poly1:
-                    l_points = list(p.exterior.coords)
-                    for j in range(len(l_points)-1):
-                        max_delta.append(LineString([l_points[j],l_points[j+1]]).length)
-            
-            new_dist= dist_n(Point_WGS84[num],Point_WGS84[num+1])
-            delX = (point0[0]-point1[0])/new_dist
-            delY = (point0[1]-point1[1])/new_dist
-            if len(poly1)==2:
-                delx =min(max_delta)*(delX/2)
-                dely =min(max_delta)*(delY/2)
-            else:
-                delx =np.mean(max_delta)*(delX/2)
-                dely =np.mean(max_delta)*(delY/2)
-            
-            new_point0 = (point0[0]-delx,point0[1]-dely)
-            new_point1 = (point1[0]+delx,point1[1]+dely)   
-#            print(point0, new_point0)
-            
-            line_new = LineString([new_point0,new_point1])  
-            dilated_new = line_new.buffer(shooting_radius, cap_style = 2, join_style=2)
-            ax.add_patch(PolygonPatch(dilated_new, fc='white', ec='white', alpha=1, zorder=1)) 
-#            plot_line(ax, line_new ,'red' , w = 100,alpha =1)
-#            ax.plot(new_point0[0],new_point0[1],'o', markersize=1000, color='blue')
-#            ax.plot(new_point1[0],new_point1[1],'o', markersize=1000, color='blue')
-            angle = get_angle(new_point0,new_point1)      
-                    
-                    
-        elif poly1.is_empty:            
-            line = LineString([point0,point1])  
-            dilated = line.buffer(shooting_radius, cap_style = 2, join_style=2)
-            
-            ax.add_patch(PolygonPatch(dilated, fc='white', ec='white', alpha=1, zorder=1))    
-#            plot_line(ax, line ,'green' , w = 100,alpha =1)   
-            angle = get_angle(point0,point1)   
-            
-        else:
-            print(poly1.geom_type)
-            angle=0
-        
-        
-#            
-        xrange, yrange = [min_point[0], max_point[0]], [min_point[1], max_point[1]]
-        ax.set_xlim(*xrange)
-        ax.set_ylim(*yrange)
-        ax.set_aspect(1) 
-        find_folder(direction_output_mask)   
-        path = os.path.join(direction_output_mask,'buffer_coord('+name+'_'+str(id_line)+').jpg')
-        fig.savefig(path)
-        plt.close()
-        del fig
-        direct = direction_output_mask.split('\\')[0]
-        with open(direct+'\coordinates.json', 'w') as f:
-            json.dump(Data_json, f, ensure_ascii=False, indent=4)
-        crop_image(direction_output_tile,direction_output_mask,direction_final,direction_rotated,name,id_line,angle)
-
-def crop_image(direction_output_tile,direction_output_mask,direction_final,direction_rotated,name,id_line,angle):
-    try:
-        path = os.path.join(direction_output_tile,'tile_satellite('+name+'_'+str(id_line)+').jpg')
-        merged_tiles = Image.open(path, 'r')
-    except: 
-        raise Exception('Ошибка данных, нет тайла:','tile_satellite('+name+'_'+str(id_line)+').jpg')
-    map_tile = np.asarray(merged_tiles)
-    try:
-        path = os.path.join(direction_output_mask,'buffer_coord('+name+'_'+str(id_line)+').jpg')
-        buffer = imread(path, cv2.IMREAD_GRAYSCALE)
-    except:
-        raise Exception('Ошибка данных, нет маски маршрута:','buffer_coord('+name+'_'+str(id_line)+').jpg')
-    gray = cv2.cvtColor(buffer, cv2.COLOR_BGR2GRAY)    
-    _, mask = cv2.threshold(gray, thresh=180, maxval=255, type=cv2.THRESH_BINARY)
-    
-    tile_x,   tile_y, _ = map_tile.shape
-    buffer_x, buffer_y  = mask.shape
-
-    x_buffer = min(tile_x, buffer_x)
-    x_half_buffer = mask.shape[0]//2
-    buffer_mask = mask[x_half_buffer-x_buffer//2 : x_half_buffer+x_buffer//2+1, :tile_y]
-    tile_to_mask = map_tile[x_half_buffer-x_buffer//2 : x_half_buffer+x_buffer//2+1, :tile_y]
-
-    masked = cv2.bitwise_and(tile_to_mask,tile_to_mask,mask = buffer_mask)
-    tmp = cv2.cvtColor(masked, cv2.COLOR_BGR2GRAY)
-    _,alpha = cv2.threshold(tmp,0,255,cv2.THRESH_BINARY)
-    b, g, r = cv2.split(masked)
-    rgba = [b,g,r, alpha]
-    masked_tr = cv2.merge(rgba,4)
-    
-    img = Image.fromarray(masked_tr, 'RGBA')
-    
-    find_folder(direction_final)
-    img.save(direction_final+'/final('+name+'_'+str(id_line)+').png')
-    rotate_img(direction_final,direction_rotated,name,id_line,angle)
-    del img
-
-def rotate_img(direction_final,direction_rotated,name,id_line,angle):
-    
-    path = os.path.join(direction_final,'final('+name+'_'+str(id_line)+').png')
-    final_pict = Image.open(path, 'r')
-    map_image = np.asarray(final_pict)
-    rotation_matrix = cv2.getRotationMatrix2D((map_image.shape[0] / 2, map_image.shape[1] / 2), angle, 1)
-    rotated_image = cv2.warpAffine(map_image, rotation_matrix, (map_image.shape[0],map_image.shape[1]), flags=cv2.INTER_LINEAR)
-
-    find_folder(direction_rotated)
-    img = Image.fromarray(rotated_image, 'RGBA')
-    img.save(direction_rotated+'/rotated('+name+'_'+str(id_line)+').png')
-    del img
-    
-
-def function_call(step_length,shooting_radius,binKey,path):
-    sis_coord = {'Pseudo_Mercator':3857, 'WGS_84': 4326 }    
-    direct = {'in':'input',
-              'out_masks': 'masks',
-              'out_tiles': 'tile_pict',
-              'out_final': 'final',
-              'merge_tiles': 'merge_tiles',
-              'rotated': 'rotated',}
-    
-    
-    if check_path(path)==True:
-        directions,view,Point_WGS84,name = list_of_points(path,direct,step_length,shooting_radius,sis_coord)            
-            
-        Tiles,Z = get_tile_dict(Point_WGS84,binKey)        
-        all_zooms=dict(zip(list(Z.values()),[list(Z.values()).count(i) for i in list(Z.values())]))
-        while len(all_zooms.keys())!=1:
-                Tiles,Z,Point_WGS84= check_zoom(Tiles,Z,all_zooms,Point_WGS84,binKey,sis_coord)
-                all_zooms=dict(zip(list(Z.values()),[list(Z.values()).count(i) for i in list(Z.values())]))
-        Tiles = save_tile_as_picture(Tiles,directions['out_tiles'],name)
-            
-        fig, ax = plt.subplots(num=None, figsize=(24,12),  dpi=30)
-        L,ax = path_plan(Tiles, Point_WGS84, ax)
-        plt.savefig(str(name)+'/plan ('+str(Point_WGS84[0])+'_'+str(Point_WGS84[-1])+').jpg')
-        plt.close()        
-        get_mask_simple(directions['out_tiles'],directions['out_masks'], directions['out_final'], directions['rotated'],Tiles,Point_WGS84, name, shooting_radius, sis_coord)
-#    else:
-#        print('неверно задан маршрут:', path )
+def size_pict(W, H, C):
+	C_new = copy.deepcopy(C)
+	deltaY, deltaX = min(H), min(W)
+	cofY = -1
+	cofX = -1
+	for c in C_new.keys():
+		C_new[c] = (C[c][0] + cofX * deltaX, C[c][1] + cofY * deltaY)
+	sizeH = max(H) + cofY * deltaY
+	sizeW = max(W) + cofX * deltaX
+	return sizeW, sizeH, C_new
 
 
+def merge_pict(Tiles, L, Point_WGS84, directions, name, ax):
+	first_tile = L[0]
+	width, high = get_parametrs(Tiles[first_tile]['start'], Tiles[first_tile]['finish'], first_tile, Tiles, L)
+	W, H = [width], [high]
+	C = {first_tile: (width, high)}
+
+	for i in range(1, len(L)):
+		key, priv_key = L[i], L[i - 1]
+
+		intersect_poly = Tiles[priv_key]['polygon'].intersection(Tiles[key]['polygon'])
+		ax.add_patch(PolygonPatch(intersect_poly, fc='blue', ec='blue', alpha=0.2, zorder=1))
+		bounds = intersect_poly.bounds
+
+		for idy in [1, 3]:
+			point = (bounds[0], bounds[idy])
+			if Point(point).touches(Tiles[priv_key]['polygon']) and Point(point).touches(Tiles[key]['polygon']):
+				ax.plot(point[0], point[1], 'o', markersize=10, color='green')
+				intersect_point = point
+				idY = idy
+
+		if Tiles[priv_key]['box'][0][0] - Tiles[key]['box'][0][0] > 0:  # клетка находится левеее(х уменьшается)
+			if idY == 3:
+				id_box = 1
+			else:
+				id_box = 0
+			plot_line(ax, LineString([intersect_point, Tiles[key]['box'][id_box]]), 'darkgreen', w=3, alpha=1)
+			del_width = dist_n(intersect_point, Tiles[key]['box'][id_box])
+			width = C[priv_key][0] - round(del_width / Tiles[key]['del_width'])
+
+			if Tiles[priv_key]['box'][0][1] - Tiles[key]['box'][0][1] > 0:  # клетка находится ниже  (у уменьшается)
+				plot_line(ax, LineString([intersect_point, Tiles[priv_key]['box'][id_box]]), 'orange', w=3.5, alpha=1)
+				del_high = dist_n(intersect_point, Tiles[priv_key]['box'][id_box])
+				high = C[priv_key][1] + round(del_high / Tiles[priv_key]['del_high'])
+			else:  # клетка находится выше  (у увеличивается)
+				plot_line(ax, LineString([intersect_point, Tiles[priv_key]['box'][id_box]]), 'orange', w=3.5, alpha=1)
+				del_high = dist_n(intersect_point, Tiles[priv_key]['box'][id_box])
+				high = C[priv_key][1] - round(del_high / Tiles[priv_key]['del_high'])
+
+		elif Tiles[priv_key]['box'][0][0] - Tiles[key]['box'][0][0] < 0:  # клетка находится правее(х увеличиваетсся)
+			if idY == 3:
+				id_box = 1
+			else:
+				id_box = 0
+			plot_line(ax, LineString([intersect_point, Tiles[priv_key]['box'][id_box]]), 'darkgreen', w=3, alpha=1)
+			del_width = dist_n(intersect_point, Tiles[priv_key]['box'][id_box])
+			width = C[priv_key][0] + round(del_width / Tiles[priv_key]['del_width'])
+
+			if Tiles[priv_key]['box'][0][1] - Tiles[key]['box'][0][1] > 0:  # клетка находится ниже  (у уменьшается)
+				plot_line(ax, LineString([intersect_point, Tiles[key]['box'][id_box]]), 'orange', w=3.5, alpha=1)
+				del_high = dist_n(intersect_point, Tiles[key]['box'][id_box])
+				high = C[priv_key][1] + round(del_high / Tiles[key]['del_high'])
+
+			else:  # клетка находится выше  (у увеличивается)
+				plot_line(ax, LineString([intersect_point, Tiles[key]['box'][id_box]]), 'orange', w=3.5, alpha=1)
+				del_high = dist_n(intersect_point, Tiles[key]['box'][id_box])
+				high = C[priv_key][1] - round(del_high / Tiles[key]['del_high'])
+		else:
+			width = C[priv_key][0]
+			ax.plot(bounds[0], bounds[3], 'o', markersize=10, color='orange')
+			p0, p1 = (bounds[0], bounds[1]), (bounds[0], bounds[3])
+			plot_line(ax, LineString([p0, p1]), 'orange', w=2, alpha=1)
+			del_high = dist_n(p0, p1)
+			if Tiles[priv_key]['box'][0][1] - Tiles[key]['box'][0][1] > 0:  # клетка находится ниже  (у уменьшается)
+				high = C[priv_key][1] + Tiles[priv_key]['size'][0] - round(del_high / Tiles[priv_key]['del_high'])
+			else:
+				high = C[priv_key][1] - Tiles[priv_key]['size'][0] + round(del_high / Tiles[priv_key]['del_high'])
+
+		C[key] = (width, high)
+		W.append(width)
+		H.append(high)
+
+	plt.savefig(str(name) + '/plan.jpg')
+	plt.close()
+	return W, H, C
 
 
-def test1_siple_path(step_length,shooting_radius,binKey):
-    ###'input/input_data.json' - файл с  примерами маршрутов
-    path =[[30.308071, 59.957235], [30.31744, 59.952105]]
-    function_call(step_length,shooting_radius,binKey,path)
-
-def test2_multi_directions(binKey):
-    step_length,shooting_radius=100,50
-    path =[[30.320787, 59.939174], [30.322353, 59.935175], [30.316753, 59.936207], [30.316302, 59.938844], [30.317568, 59.939995], [30.320787, 59.939174]]
-#    path =[[30.317568, 59.939995],[30.316302, 59.938844],[30.316753, 59.936207],[30.322353, 59.935175],  [30.320787, 59.939174] ]#, [30.320787, 59.939174]]
-    
-    function_call(step_length,shooting_radius,binKey,path)
-
-def test3 (step_length,shooting_radius, binKey):
-    sis_coord = {'Pseudo_Mercator':3857, 'WGS_84': 4326 } 
-    transformer_84_PM = Transformer.from_crs(sis_coord['WGS_84'],sis_coord['Pseudo_Mercator'])  
-    transformer_PM_84 = Transformer.from_crs(sis_coord['Pseudo_Mercator'],sis_coord['WGS_84'])  
-    ###создание маршрута
-    start = [39.654624,47.273392]     
-    start_PM = transformer_84_PM.transform(start[1],start[0])
-    finish_PM = (start_PM[0]-700,start_PM[1]-690)
-    finish = transformer_PM_84.transform(finish_PM[0],finish_PM[1])
-    ########
-    path=[start,[finish[1],finish[0]]]
-    function_call(step_length,shooting_radius,binKey,path)
-    
-def test4 (step_length,shooting_radius, binKey):
-    with open(os.path.join('input','input_data.json'), 'r', encoding='utf-8') as j:
-        List = json.load(j)
-    for path in List:
-        function_call(step_length,shooting_radius,binKey,path)
-        
+def final_pict(W, H, C, Tiles, direction_tile, direction, name, num0, num1):
+	first_tile = list(Tiles.keys())[0]
+	size_pictures = Tiles[first_tile]['size']
+	new_image = Image.new('RGBA', (W + size_pictures[0], H + size_pictures[1]), (250, 250, 250))
+	i = 0
+	for key in C.keys():
+		i += 1
+		name_tile = Tiles[key]['name_pict']
+		try:
+			path = os.path.join(direction_tile, 'tile_' + name_tile + '.jpg')
+			image = Image.open(path, 'r')
+		except:
+			path = os.path.join(direction_tile, 'tile_' + name_tile + '.png')
+			image = Image.open(path, 'r')
+		new_image.paste(image, C[key])
+	rgb_im = new_image.convert('RGBA')
+	path1 = os.path.join(direction, 'merged_' + name + '_' + str(num0) + '_' + str(num1) + '.png')
+	rgb_im.save(path1)
+	del new_image
 
 
-if __name__ == '__main__2':
-    
-    ###НА ВХОДЕ: 1. марштур в виде списка, можно задать 2 типа маршрутов:
-    ###                                     *простой - 2 точки [start, finish];
-    ###                                     *составной - несколько точек [start, point1, point2,..., finish];
-    ###            point = [долгота, широта] - точчи задаются листом;
-    ###            'input/input_data.json' - файл с набором разных маршрутов.
-    ###
-    ###         2. Ключ BingAPI.
-    
-    ###         3. step_length - Дискретный шаг сьемки (определяяет масштаб получаемого снимка), shooting_radius - радиус сьемки, если маршрут:
-    ###                                         *простой(start, finish), оба параметра задаются пользователем;
-    ###                                         *составной(start, point1, point2,..., finish), параметры являются дефолтными step_length = 100 метром, 
-    ###                                                                                                                      shooting_radius = 50м.
-    ###           
-    
-    ###НА ВЫХОДЕ: 
-    ###         КАТАЛОГ c названием, определяющим первую и последную точку маршрута, который содержит след каталоги и файлы:
-    ###                                     1.  '/tile_pict' - набор спутниковых снимков, сделанных на каждом шаге пути,
-    ###                                     2.  '/masks' - набор вспомогательных картинок, представляющих собой шаги,
-    ###                                     3.  '/final' - набор финальных картинок, представляющие собой снимки на каждом шаге, 
-    ###                                     4.  'plan(___).jpeg' - схематичное представление полного маршрута,
-    
-               
-    
-    
-        
-    binKey = "AjJhQyVMzBNnY6-64Wt0GpVT_MckgYdZYCP5tSOS4mAkhjY1Pso5FEiGN9nNf4et"   
-    step_length,shooting_radius = 300, 100  
-    
-    ###ТЕСТ для простого маршрута 
-    #test1_siple_path(step_length,shooting_radius,binKey)
-    
+def save_merged_image(sizeW, sizeH, C_new, L, Tiles, name, directions):
+	first_tile = list(Tiles.keys())[0]
+	size_pictures = Tiles[first_tile]['size']
+	Merged_tiles = {}
+	if len(L) > 10:
+		List_keys = list(C_new.keys())
+		keys = []
+		if len(List_keys) // 10 == 1:
+			num_pict = len(List_keys) // 2
+			keys = [(0, num_pict + 1), (num_pict, len(List_keys) - 1)]
+
+		else:
+			if len(List_keys) % 10 > 5:
+				num_pict = len(List_keys) // 10 + 1
+				tiles_in_pict = int(len(List_keys) // num_pict)
+			else:
+				num_pict = len(List_keys) // 10
+				tiles_in_pict = int(len(List_keys) // num_pict)
+
+			for j in range(num_pict - 1):
+				keys.append((j * tiles_in_pict, (j + 1) * (tiles_in_pict) + 1))
+			keys.append(((num_pict - 1) * tiles_in_pict, len(List_keys) - 1))
+		id_pict = 0
+		for pair in keys:
+			Merged_tiles[str(pair[0]) + '_' + str(pair[1])] = {'id_tiles': []}
+			list0 = list(List_keys[pair[0]:pair[1]])
+			C_ten, W_ten, H_ten = {}, [], []
+			X, Y = [], []
+			num = 0
+			for l in list0:
+				Merged_tiles[str(pair[0]) + '_' + str(pair[1])]['id_tiles'].append(l)
+				for point in Tiles[l]['box']:
+					X.append(point[0])
+					Y.append(point[1])
+				C_ten[l] = C_new[l]
+				W_ten.append(C_new[l][0])
+				H_ten.append(C_new[l][1])
+				sizeW3, sizeH3, C_new3 = size_pict(W_ten, H_ten, C_ten)
+				final_pict(sizeW3, sizeH3, C_new3, Tiles, directions['out_tiles'], directions['step_by_step'], name, id_pict, num)
+				num += 1
+			id_pict += 1
+
+			sizeW2, sizeH2, C_new2 = size_pict(W_ten, H_ten, C_ten)
+			final_pict(sizeW2, sizeH2, C_new2, Tiles, directions['out_tiles'], directions['merged_tiles'], name, pair[0], pair[1])
+			Merged_tiles[str(pair[0]) + '_' + str(pair[1])]['X'] = (min(X), max(X))
+			Merged_tiles[str(pair[0]) + '_' + str(pair[1])]['Y'] = (min(Y), max(Y))
+			Merged_tiles[str(pair[0]) + '_' + str(pair[1])]['size_img'] = (sizeW2 + size_pictures[0], sizeH2 + size_pictures[1])
+
+	else:
+		Merged_tiles[str(0) + '_' + str(len(L))] = {'id_tiles': []}
+		C_ten, W_ten, H_ten = {}, [], []
+		X, Y = [], []
+		num = 0
+		for c in C_new.keys():
+			Merged_tiles[str(0) + '_' + str(len(L))]['id_tiles'].append(c)
+			for point in Tiles[c]['box']:
+				X.append(point[0])
+				Y.append(point[1])
+			C_ten[c] = C_new[c]
+			W_ten.append(C_new[c][0])
+			H_ten.append(C_new[c][1])
+			sizeW3, sizeH3, C_new3 = size_pict(W_ten, H_ten, C_ten)
+			final_pict(sizeW3, sizeH3, C_new3, Tiles, directions['out_tiles'], directions['step_by_step'], name, 0, num)
+			num += 1
+
+		Merged_tiles[str(0) + '_' + str(len(L))]['X'] = (min(X), max(X))
+		Merged_tiles[str(0) + '_' + str(len(L))]['Y'] = (min(Y), max(Y))
+		Merged_tiles[str(0) + '_' + str(len(L))]['size_img'] = (sizeW + size_pictures[0], sizeH + size_pictures[1])
+		final_pict(sizeW, sizeH, C_new, Tiles, directions['out_tiles'], directions['merged_tiles'], name, 0, len(L))
+	return Merged_tiles
 
 
-##    
-##    
-    ###ТЕСТ для составного маршрута из 6 точек
-    #test2_multi_directions(binKey)
-##    
-#    ###ТЕСТ, где задана только точка старта, для нее определяется точка финиша на определенном расстоянии
-    #test3 (step_length,shooting_radius, binKey)
-    
-    test4(step_length,shooting_radius, binKey)
+def get_angle(point0, point1):
+	P1 = Point(point1)
+	P2 = Point((point0[0], point1[1]))
+	interP = Point(point0)
+
+	dx = P1.x - interP.x
+	dy = P1.y - interP.y
+
+	dx2 = interP.x - P2.x
+	dy2 = interP.y - P2.y
+
+	azimuth1 = np.arctan2(dx, dy) * 180 / np.pi
+	azimuth2 = np.arctan2(dx2, dy2) * 180 / np.pi
+
+	azimuth11 = 360 - azimuth1  # dx>0 & dy<0
+	azimuth22 = 180 - azimuth2  # dx<0 & dy>0
+	angle = -(azimuth11 - azimuth22)
+	return angle
+
+
+def get_mask(size_image, key, l, Merged_tiles, name, new_name, id_i, shooting_radius, direction_output_mask, Data_json, sis_coord):
+	transformer = Transformer.from_crs(sis_coord['WGS_84'], sis_coord['Pseudo_Mercator'])
+	transformer_84 = Transformer.from_crs(sis_coord['Pseudo_Mercator'], sis_coord['WGS_84'])
+	plt.rcParams['savefig.facecolor'] = 'black'
+	fig = plt.figure(figsize=(size_image[0], size_image[1]), dpi=1)  # frameon=False,
+	fig.patch.set_facecolor('black')
+	ax = plt.Axes(fig, [0., 0., 1., 1.])
+	ax.set_axis_off()
+	ax.patch.set_facecolor('black')
+	fig.add_axes(ax)
+	point0 = transformer.transform(l[0][1], l[0][0])
+	point1 = transformer.transform(l[1][1], l[1][0])
+
+	angle = get_angle(point0, point1)
+
+	minXY = (min(Merged_tiles[key]['X']), min(Merged_tiles[key]['Y']))
+	maxXY = (max(Merged_tiles[key]['X']), max(Merged_tiles[key]['Y']))
+
+	min_point = transformer.transform(minXY[1], minXY[0])
+	max_point = transformer.transform(maxXY[1], maxXY[0])
+	p1, p3 = transformer.transform(maxXY[1], minXY[0]), transformer.transform(minXY[1], maxXY[0])
+
+	poly = Polygon([(min_point[0], min_point[1]), (p1[0], p1[1]), (max_point[0], max_point[1]), (p3[0], p3[1])])
+	ax.add_patch(PolygonPatch(poly, fc='black', ec='black', alpha=1, lw=100))
+	line = LineString([point0, point1])
+	dilated = line.buffer(shooting_radius, cap_style=2, join_style=2)
+	bound = dilated.bounds
+	a1 = transformer_84.transform(bound[0], bound[1])
+	a2 = transformer_84.transform(bound[2], bound[3])
+	Data_json[str(key) + '_' + str(id_i)] = {'start': (l[0][1], l[0][0]), 'finish': (l[1][1], l[1][0]), 'minXY_box:': a1, 'maxXY_box:': a2}
+
+	ax.add_patch(PolygonPatch(dilated, fc='white', ec='white', alpha=1, zorder=1))
+
+	xrange, yrange = [min_point[0], max_point[0]], [min_point[1], max_point[1]]
+	ax.set_xlim(*xrange)
+	ax.set_ylim(*yrange)
+	ax.set_aspect(1)
+	path_buf = os.path.join(direction_output_mask, 'mask_' + new_name + '_' + str(key) + '_' + str(id_i) + '.jpg')
+
+	plt.savefig(path_buf, facecolor='black', transparent=False)
+	plt.close()
+	del fig
+
+	return angle, Data_json
+
+
+def crop_image(direction_merged, direction_output_mask, direction_final, name, new_name, key, id_i):
+	path_merged = os.path.join(direction_merged, 'merged_' + name + '_' + str(key) + '.png')
+	mTile = Image.open(path_merged, 'r')
+	map_tile = np.asarray(mTile)
+	mTile.close()
+
+	path_buf = os.path.join(direction_output_mask, 'mask_' + new_name + '_' + str(key) + '_' + str(id_i) + '.jpg')
+	buffer = imread(path_buf, cv2.IMREAD_GRAYSCALE)
+	gray = cv2.cvtColor(buffer, cv2.COLOR_BGR2GRAY)
+	_, mask = cv2.threshold(gray, thresh=180, maxval=255, type=cv2.THRESH_BINARY)
+
+	tile_x, tile_y, _ = map_tile.shape
+	buffer_x, buffer_y = mask.shape
+
+	x_buffer = min(tile_x, buffer_x)
+	x_half_buffer = mask.shape[0] // 2
+	buffer_mask = mask[x_half_buffer - x_buffer // 2: x_half_buffer + x_buffer // 2 + 1, :tile_y]
+	tile_to_mask = map_tile[x_half_buffer - x_buffer // 2: x_half_buffer + x_buffer // 2 + 1, :tile_y]
+
+	masked = cv2.bitwise_and(tile_to_mask, tile_to_mask, mask=buffer_mask)
+	tmp = cv2.cvtColor(masked, cv2.COLOR_BGR2GRAY)
+	_, alpha = cv2.threshold(tmp, 0, 255, cv2.THRESH_BINARY)
+	b, g, r, a = cv2.split(masked)
+	rgba = [b, g, r, alpha]
+	masked_tr = cv2.merge(rgba, 4)
+
+	img = Image.fromarray(masked_tr, 'RGBA')
+	img.save(direction_final + '/not_rotated_' + new_name + '_' + str(key) + '_' + str(id_i) + '.png')
+	img.close()
+
+	image = cv2.imread(direction_final + '/not_rotated_' + new_name + '_' + str(key) + '_' + str(id_i) + '.png')
+	original_image = image
+	gray_img = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+	edges = cv2.Canny(gray_img, 50, 255)
+	contours, hierarchy = cv2.findContours(edges.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+	x, y = [], []
+	for contour_line in contours:
+		for contour in contour_line:
+			x.append(contour[0][0])
+			y.append(contour[0][1])
+	x1, x2, y1, y2 = min(x), max(x), min(y), max(y)
+	cropped = original_image[y1:y2, x1:x2]
+	cv2.imwrite(direction_final + '/crop_' + new_name + '_' + str(key) + '_' + str(id_i) + '.png', cropped)
+
+
+def rotate_img(angle, direction_final, direction_rotated, name, new_name, key, id_i):
+	path_final = os.path.join(direction_final, 'crop_' + new_name + '_' + str(key) + '_' + str(id_i) + '.png')
+	final_img = Image.open(path_final, 'r')
+	map_image = np.asarray(final_img)
+	rotation_matrix = cv2.getRotationMatrix2D((map_image.shape[0] / 2, map_image.shape[1] / 2), angle, 1)
+	rotated_image = cv2.warpAffine(map_image, rotation_matrix, (map_image.shape[0], map_image.shape[1]), flags=cv2.INTER_LINEAR)
+
+	img = Image.fromarray(rotated_image, 'RGB')
+	img.save(direction_rotated + '/' + new_name + '.png')
+	del img
+
+
+def function_call(type_img, path, crop_step, binKey):
+	sis_coord = {'Pseudo_Mercator': 3857, 'WGS_84': 4326}
+	direct = {'output': {'out_masks': 'masks', 'out_tiles': 'tiles', 'out_not_rotated': 'not_rotated'},
+	          'final': {'merged_tiles': 'merge_tiles', 'rotated_pict': 'rotated_pict', 'step_by_step': 'merging_of_tiles'}}
+	Type_of_imagery = {'Satellite': 'Aerial',
+	                   'SatelliteLabels': 'AerialWithLabels',
+	                   'Road': 'Road',
+	                   'DarkRoad': 'CanvasDark',
+	                   'LightRoad': 'CanvasLight',
+	                   'GrayRoad': 'CanvasGray'}
+
+	step_length = 100
+	start = (formart_point(path[0])[1], formart_point(path[0])[0])
+	finish = (formart_point(path[1])[1], formart_point(path[1])[0])
+
+	if dist_n(start, finish) < crop_step:
+		raise ValueError("not valid parameter 'crop_step'")
+
+	lon_lat_s = valid_lonlat(start[1], start[0])
+	lon_lat_f = valid_lonlat(finish[1], finish[0])
+	if lon_lat_s is None and lon_lat_f is None:
+		raise ValueError("(lon, lat) is not in WGS84 bounds")
+	else:
+		start = (lon_lat_s[1], lon_lat_s[0])
+		finish = (lon_lat_f[1], lon_lat_f[0])
+
+		name = type_img + '_' + str(path[0]) + '_' + str(path[1])
+		find_folder(name)
+		directions = new_directions(direct, name)
+		dist, step, view, delta = set_points(start, finish, step_length)
+
+		remain = dist % step_length
+		if remain != 0:
+			new_finish = extend_path(start, finish, step_length, remain, dist, sis_coord)
+			Point_WGS84 = get_list_points(start, new_finish, delta, sis_coord)
+		else:
+			Point_WGS84 = get_list_points(start, finish, delta, sis_coord)
+
+		Tiles, Z = get_tile_dict(Point_WGS84, binKey, Type_of_imagery[type_img], name, directions['out_tiles'])
+		# a1ll_zooms=dict(zip(list(Z.values()),[list(Z.values()).count(i) for i in list(Z.values())]))
+
+		fig, ax = plt.subplots(num=None, figsize=(24, 12), dpi=100)
+		L, ax = path_plan(Tiles, Point_WGS84, ax)
+
+		W, H, C = merge_pict(Tiles, L, Point_WGS84, directions, name, ax)
+		sizeW, sizeH, C_new = size_pict(W, H, C)
+		Merged_tiles = save_merged_image(sizeW, sizeH, C_new, L, Tiles, name, directions)
+		Data_json = {}
+		Lines = []
+		for key in Merged_tiles.keys():
+			path_tile = os.path.join(directions['merged_tiles'], 'merged_' + name + '_' + str(key) + '.png')
+			mTile = Image.open(path_tile, 'r')
+			size_image = mTile.size
+			mTile.close()
+			L = Merged_tiles[key]['id_tiles']
+
+			s, f = L[0][0], L[-1][1]
+			dist, step, view, delta = set_points(s, f, crop_step)
+			Point_WGS84 = get_list_points(s, f, delta - 1, sis_coord)
+			id_i = 0
+			for i in range(len(Point_WGS84) - 1):
+				l = (Point_WGS84[i], Point_WGS84[i + 1])
+				new_name = str([Point_WGS84[i][1], Point_WGS84[i][0]]) + ',' + str([Point_WGS84[i + 1][1], Point_WGS84[i + 1][0]])
+				if l not in Lines:
+					Lines.append(l)
+					angle, Data_json = get_mask(size_image, key, l, Merged_tiles, name, new_name, id_i, crop_step - 20, directions['out_masks'], Data_json, sis_coord)
+					crop_image(directions['merged_tiles'], directions['out_masks'], directions['out_not_rotated'], name, new_name, key, id_i)
+					rotate_img(angle, directions['out_not_rotated'], directions['rotated_pict'], name, new_name, key, id_i)
+				id_i += 1
+		with open(name + '\coordinates.json', 'w') as f:
+			json.dump(Data_json, f, ensure_ascii=False, indent=4)
+
+
+###########TESTS#######
+
+
+def test1(type_img, crop_step, binKey):
+	path = [[40.754399, -73.98669], [40.769008, -73.97391]]
+	function_call(type_img, path, crop_step, binKey)
+
+
+def test2(type_img, crop_step, binKey):
+	path = [[38.708838, -9.131419], [38.712479, -9.139875]]
+	function_call(type_img, path, crop_step, binKey)
+
+
+def test3(type_img, crop_step, binKey):
+	sis_coord = {'Pseudo_Mercator': 3857, 'WGS_84': 4326}
+	transformer_84_PM = Transformer.from_crs(sis_coord['WGS_84'], sis_coord['Pseudo_Mercator'])
+	transformer_PM_84 = Transformer.from_crs(sis_coord['Pseudo_Mercator'], sis_coord['WGS_84'])
+	###создание маршрута
+	start = [47.273392, 39.654624]
+	start_PM = transformer_84_PM.transform(start[0], start[1])
+	finish_PM = [start_PM[0] - 690, start_PM[1] - 700]
+	finish = transformer_PM_84.transform(finish_PM[0], finish_PM[1])
+	########
+	path = [start, finish]
+	function_call(type_img, path, crop_step, binKey)
+
+
+def test4(type_img, crop_step, binKey):
+	path = [[59.949893, 30.314885], [59.951881, 30.308791]]
+	function_call(type_img, path, crop_step, binKey)
+
+
+#############
 
 if __name__ == '__main__':
-    function_call(1000,100,"Agk8Im5rSKvyKNxRK5r3RDwlqQm11T5XP6fm7mtN37tyEK6Yycj3CINqL3PJrH9M",[[30.306299106247973,60.058562937274395],[30.33502441725433,59.984443080544764]])
+	###НА ВХОДЕ: 1. type_img - тип скачиваемых тайлов type_of_imagery
+	###          2. маршрут в виде списка 2 точки [start, finish];
+	###             point = [широта,долгота] - точки задаются листом ;
+	###          3. crop_step - Дискретный шаг для вырезания картинки, задается в метрах,
+	###          4. Ключ BingAPI.
+	###
 
+	###НА ВЫХОДЕ:
+	###         КАТАЛОГ c названием, определяющим тип карты, первую и последнюю точку маршрута, который содержит след каталоги и файлы:
+	###						1. '/output' - каталог с вспомогательными картинками, которые получаются походу работы кода
+	###									* '\tiles' - скачанные тайлы
+	###									* '\masks' - созданные маски для вырезания кадров
+	###									* '\not_rotated' - вырезанные кадры, не повернутые 
+	###						
+	###						2. '/final' - каталог, где содержатся финальные картинки
+	###									* '\merge_tiles' - объединенные тайлы, если расстояние между точками start, finish > 1000, разбиваются на несколько наборов, чтобы картинки были приемлемого размера
+	###									* '\merging_of_tiles' - картинки с постепенным объединением тайлов
+	###									* '\rotated_pict' - набор финальных вертикальных картинок 
+	###						3.  'coordinates.json' - данные о финальных картинках, старт, финиш, левая нижняя и правая верхняя точки вырезанного кадра   
+	###                     4.  'plan(___).jpeg' - схематичное представление всей съемки
 
+	binKey = "AjJhQyVMzBNnY6-64Wt0GpVT_MckgYdZYCP5tSOS4mAkhjY1Pso5FEiGN9nNf4et"
+	type_of_imagery = ['Satellite', 'SatelliteLabels', 'Road', 'DarkRoad', 'LightRoad', 'GrayRoad']
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-   
- 
-    
+	crop_step = 100
+	test1('Satellite', crop_step, binKey)
+	test2('Satellite', crop_step, binKey)
+	test3('Satellite', crop_step, binKey)
+	test4('Satellite', crop_step, binKey)
+	#
+	test1('Road', crop_step, binKey)
+	test2('DarkRoad', crop_step, binKey)
+	test3('LightRoad', crop_step, binKey)
+	test4('GrayRoad', crop_step, binKey)

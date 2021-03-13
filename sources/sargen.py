@@ -129,9 +129,9 @@ def _shift_corner(corner_points: np.ndarray, index: int, image: Image, deviation
 	if not 0 <= index < 4:
 		raise ValueError('Index must be 0, 1, 2 or 3.')
 	shift = -generator.uniform(0, deviation * image.size[0], 2).astype(corner_points.dtype)  # inverse for expanding transformation instead of reducing one
-	if index == 0 or index == 3:
+	if index in (0, 3):
 		shift[0] = -shift[0]
-	if index == 0 or index == 1:
+	if index in (0, 1):
 		shift[1] = -shift[1]
 	corner_points[index] += shift
 

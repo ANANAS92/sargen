@@ -102,15 +102,15 @@ class MapProcessor(QSecondaryWindow):
 
 	def __init__(self, path: List[List[float]]):
 		super().__init__('Параметры симуляции')
-		self.path = [[x[1], x[0]] for x in path]  # TODO: swap long,lat in next script versions
+		self.path = path
 		self.initUI()
 
 	def initUI(self):
 		layout = QVBoxLayout()
 
 		simulation_parameters = [
-			ParameterDescription('Высота полёта', 1732, type=float),
-			ParameterDescription('Ширина диаграммы направленности (°)', 60, tip='Определяет угол обзора камеры-радара.', type=float),
+			# ParameterDescription('Высота полёта', 1732, type=float),
+			# ParameterDescription('Ширина диаграммы направленности (°)', 60, tip='Определяет угол обзора камеры-радара.', type=float),
 			ParameterDescription('Скорость полёта', 200, type=float),
 			ParameterDescription('Частота съёмки', 0.2, type=float),
 			ParameterDescription('Ключ API Bing', 'AjJhQyVMzBNnY6-64Wt0GpVT_MckgYdZYCP5tSOS4mAkhjY1Pso5FEiGN9nNf4et'),
@@ -151,17 +151,19 @@ class MapProcessor(QSecondaryWindow):
 
 	def generate_optic_images(self, save_directory: Path):
 		step_length = int(self.control['Скорость полёта'] / self.control['Частота съёмки'])
-		shooting_radius = int(self.control['Высота полёта'] * math.tan(math.radians(self.control['Ширина диаграммы направленности (°)'] / 2)))
-		tile_functions.function_call(step_length, shooting_radius, self.control['Ключ API Bing'], self.path)
+		# shooting_radius = int(self.control['Высота полёта'] * math.tan(math.radians(self.control['Ширина диаграммы направленности (°)'] / 2)))
+		# tile_functions.function_call(step_length, shooting_radius, self.control['Ключ API Bing'], self.path)
+		tile_functions.function_call('Satellite', self.path, step_length, self.control['Ключ API Bing'])
 
 	def generate_sar_images(self, save_directory: Path):
+		save_directory = save_directory.with_name('Satellite_' + save_directory.name) / 'final'
 		sar_directory = save_directory / 'sar'
 		sar_directory.mkdir(exist_ok=True)
 		transform = True
 		deviation = self.control['Порывы ветра (%)']
 		if deviation < 0.0001:
 			transform = False
-		for file in (save_directory / 'rotated').glob('*.png'):
+		for file in (save_directory / 'rotated_pict').glob('*.png'):
 			sar(file, transform=transform, rotate=False, tilt_deviation=deviation, scale_deviation=deviation).save(sar_directory / file.name)
 
 
