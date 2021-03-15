@@ -114,7 +114,7 @@ class MapProcessor(QSecondaryWindow):
 			ParameterDescription('Скорость полёта', 200, type=float),
 			ParameterDescription('Частота съёмки', 0.2, type=float),
 			ParameterDescription('Ключ API Bing', 'AjJhQyVMzBNnY6-64Wt0GpVT_MckgYdZYCP5tSOS4mAkhjY1Pso5FEiGN9nNf4et'),
-			ParameterDescription('Порывы ветра (%)', 20, tip='Определяет нестабильность съёмки.<br>Установите значение 0 для отключения симуляции ветра.', type=float, formatter=lambda x: x / 100)
+			ParameterDescription('Порывы ветра (%)', 20, tip='Определяет нестабильность съёмки.<br>Установите значение 0 для отключения симуляции ветра.', type=float, formatter=lambda x: clamp(x / 100, 0, 0.5))
 		]
 
 		label = QLabel('Координаты маршрута:\r\n' + json.dumps(self.path, ensure_ascii=False, indent=4))
@@ -215,6 +215,14 @@ class GarbageCollectionManager:
 	@staticmethod
 	def unfreeze(pointer):
 		GarbageCollectionManager.pointers.remove(pointer)
+
+
+def clamp(value, minimum, maximum):
+	if value < minimum:
+		return minimum
+	if value > maximum:
+		return maximum
+	return value
 
 
 app = QApplication(sys.argv)
