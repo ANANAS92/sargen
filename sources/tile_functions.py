@@ -51,7 +51,7 @@ def valid_lonlat(lon, lat):
 
 def dist_2points(p0,p1):
     a,b= Point(p0),Point(p1)
-    angle1,angle2,distance1 = geod.inv(a.x, a.y, b.x, b.y)
+    _,_,distance1 = geod.inv(a.x, a.y, b.x, b.y)
     return distance1
 
 def get_list_points(start,finish,delta):
@@ -656,6 +656,12 @@ def test4(type_img,shooting_step,binKey):
 def test5(type_img,shooting_step,binKey):
     path =[[38.708838, -9.131419],[38.712479, -9.139875]]
     function_call(type_img,path,shooting_step,binKey)
+    
+def test6(type_img,shooting_step,binKey):
+    path =[[59.968312, 30.208302],[59.964594, 30.213900]]
+    function_call(type_img,path,shooting_step,binKey)
+
+
 
 
 
@@ -688,14 +694,16 @@ if __name__ == '__main__':
     Type_of_tile = ['Satellite','SatelliteLabels','Road','DarkRoad','LightRoad','GrayRoad']  
   
     shooting_step = 100    
-    test1('Satellite',shooting_step,binKey)
+    #test1('Satellite',shooting_step,binKey)
     test2('Satellite',shooting_step,binKey)
-    test3('Satellite',shooting_step,binKey)
-    test4('Satellite',shooting_step,binKey)
-    test5('Satellite',shooting_step,binKey)
+    #test3('Satellite',shooting_step,binKey)
+    #test4('Satellite',shooting_step,binKey)
+    #test5('Satellite',shooting_step,binKey)
+    #test5('Satellite',shooting_step,binKey)
+    
 
-    test1('Road',shooting_step,binKey)
-    test2('DarkRoad',shooting_step,binKey)
-    test3('LightRoad',shooting_step,binKey)
-    test4('GrayRoad',shooting_step,binKey)
+    #test1('Road',shooting_step,binKey)
+    #test2('DarkRoad',shooting_step,binKey)
+    #test3('LightRoad',shooting_step,binKey)
+    #test4('GrayRoad',shooting_step,binKey)
 
