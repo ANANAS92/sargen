@@ -444,6 +444,11 @@ def crop(buffer, map_tile, direction_no_rotated, p1):
         img2 = Image.fromarray(cropped, 'RGBA')
         img2.save(direction_no_rotated+'/'+str(p1[1])+'_'+str(p1[0])+'.png')
         img2.close()
+
+        full_box = map_tile [y1:y2, x1:x2]
+        img3 = Image.fromarray(full_box, 'RGBA')
+        img3.save(direction_no_rotated+'/box_'+str(p1[1])+'_'+str(p1[0])+'.png')
+        img3.close()
     except:
         img2 = Image.fromarray(masked_tr, 'RGBA')
         img2.save(direction_no_rotated+'/'+str(p1[1])+'_'+str(p1[0])+'.png')
@@ -570,11 +575,17 @@ def get_all_pict(set_points,Merged_tiles,directions,shooting_step,name):
         ax.set_xlim(*xrange)
         ax.set_ylim(*yrange)
         for j in range(len(Points)):
-            Data_json [str(i)+'_'+str(j)] = {'center_point':(Points[j][1],Points[j][0]), 'polygon_coordinates': []}
+            Data_json [str(i)+'_'+str(j)] = {'center_point':(Points[j][1],Points[j][0]), 'polygon_coordinates': [], 'box_coordinates':[]}
             coords = no_rotated_image(fig,ax, Points[j],angle,2*w,2*h,map_tile,min_point,max_point,directions)
+            x,y=[],[]
             for coord in coords:
-                Data_json[str(i)+'_'+str(j)]['polygon_coordinates'].append(transformer_84.transform(coord[0],coord[1])) 
+                point=transformer_84.transform(coord[0],coord[1])
+                Data_json[str(i)+'_'+str(j)]['polygon_coordinates'].append(point) 
+                x.append(point[0])
+                y.append(point[1])
             rotate_img(angle,directions['not_rotated_img'],directions['rotated_img'],Points[j])
+            min_X,min_Y,max_X,max_Y = min(x),min(y),max(x),max(y)            
+            Data_json [str(i)+'_'+str(j)]['box_coordinates'] = [(min_X,min_Y),(min_X,max_Y),(max_X,max_Y),(max_X,min_Y)] 
         plt.clf()
         plt.cla()
         plt.close('all')      
